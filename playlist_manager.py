@@ -7,7 +7,7 @@ from datetime import datetime
 
 # Spotify API credentials
 client_id = 'your_client_id'
-client_secret = 'your_secret_id'
+client_secret = 'your_client_secret'
 redirect_uri = 'http://localhost:8000/callback/'
 
 # Rate-limiting constants
@@ -50,48 +50,48 @@ def export_playlists():
         csv_writer = csv.writer(csv_file)
         csv_writer.writerow(['artist_id', 'track_id', 'album_id', 'artist_name', 'track_name', 'album_name', 'track_popularity', 'release_date', 'playlist_id', 'playlist_name', 'playlist_index'])
 
+        # Initialize the first playlist request
         playlists = sp.current_user_playlists(limit=50)
         total_playlists = playlists['total']
         print(f"Total playlists to export: {total_playlists}")
 
-        try:
-            while playlists:
-                for playlist_index, playlist in enumerate(playlists['items'], start=1):
-                    offset = 0
-                    while True:
-                        rate_limit_check()
-                        tracks = sp.playlist_tracks(playlist['id'], offset=offset)
+        playlist_index = 1
 
-                        for track in tracks['items']:
-                            track_id = track['track']['id']
-                            artist_id = track['track']['artists'][0]['id']
-                            album_id = track['track']['album']['id']
-                            artist_name = track['track']['artists'][0]['name']
-                            track_name = track['track']['name']
-                            album_name = track['track']['album']['name']
-                            track_popularity = track['track']['popularity']
-                            release_date = track['track']['album']['release_date']
-                            playlist_id = playlist['id']
-                            playlist_name = playlist['name']
-                            csv_writer.writerow([artist_id, track_id, album_id, artist_name, track_name, album_name, track_popularity, release_date, playlist_id, playlist_name, playlist_index])
+        while playlists:
+            for playlist in playlists['items']:
+                offset = 0
+                while True:
+                    rate_limit_check()
+                    tracks = sp.playlist_tracks(playlist['id'], offset=offset)
 
-                        offset += len(tracks['items'])
-                        if not tracks['next']:
-                            break
+                    for track in tracks['items']:
+                        track_id = track['track']['id']
+                        artist_id = track['track']['artists'][0]['id']
+                        album_id = track['track']['album']['id']
+                        artist_name = track['track']['artists'][0]['name']
+                        track_name = track['track']['name']
+                        album_name = track['track']['album']['name']
+                        track_popularity = track['track']['popularity']
+                        release_date = track['track']['album']['release_date']
+                        playlist_id = playlist['id']
+                        playlist_name = playlist['name']
+                        csv_writer.writerow([artist_id, track_id, album_id, artist_name, track_name, album_name, track_popularity, release_date, playlist_id, playlist_name, playlist_index])
 
-                    print(f"Playlist '{playlist['name']}' exported.")
-                    # Progress update
-                    print(f"Export progress: {playlist_index}/{total_playlists}")
+                    offset += len(tracks['items'])
+                    if not tracks['next']:
+                        break
 
-                playlists = sp.next(playlists)
-                
-        except KeyboardInterrupt:
-            print("\nExport interrupted.")
-            exit(0)
+                print(f"Playlist '{playlist['name']}' exported.")
+                # Progress update
+                print(f"Export progress: {playlist_index}/{total_playlists}")
+                playlist_index += 1
+
+            # Fetch the next set of playlists
+            playlists = sp.next(playlists) if playlists['next'] else None
 
     print(f"Playlists exported successfully to {csv_filename}.")
 
-# Import Spotify playlists from CSV
+
 def import_playlists():
     scope = "playlist-modify-public playlist-modify-private playlist-read-private"
     sp = init_spotify(scope)
@@ -157,8 +157,12 @@ def import_playlists():
     for i, playlist in enumerate(playlists):
         print(f"{i + 1}. {playlist}")
 
-    user_input = input(f"\nEnter playlist numbers, ranges, or a combination (e.g., 1,3,5-7): ")
-    indices = parse_input(user_input, len(playlists))
+    user_input = input(f"\nEnter playlist numbers, ranges, or 'all' (e.g., 1,3,5-7 or all): ")
+
+    if user_input.lower() == 'all':
+        indices = list(range(1, len(playlists) + 1))
+    else:
+        indices = parse_input(user_input, len(playlists))
 
     if not indices:
         print("No valid playlists selected.")
@@ -194,11 +198,16 @@ def parse_input(input_str, max_value):
             if start <= end and start >= 1 and end <= max_value:
                 indices.update(range(start, end + 1))
         else:
-            index = int(part)
-            if 1 <= index <= max_value:
-                indices.add(index)
+            try:
+                index = int(part)
+                if 1 <= index <= max_value:
+                    indices.add(index)
+            except ValueError:
+                # Handle the case where part is not an integer
+                continue
 
     return sorted(indices)
+
 
 def main():
     print("Select an option:")
