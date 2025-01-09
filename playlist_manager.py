@@ -208,20 +208,115 @@ def parse_input(input_str, max_value):
 
     return sorted(indices)
 
+# New function to handle importing track IDs from a text file
+def import_tracks_from_txt():
+    scope = "playlist-modify-public playlist-modify-private playlist-read-private"
+    sp = init_spotify(scope)
 
+    def list_txt_files():
+        """List all .txt files in the current directory."""
+        files = [f for f in os.listdir('.') if f.endswith('.txt')]
+        return files
+
+    def load_track_ids_from_txt(file_path):
+        """Read track IDs from a text file."""
+        with open(file_path, 'r', encoding='utf-8') as file:
+            return [line.strip() for line in file if line.strip()]
+
+    # List available text files
+    txt_files = list_txt_files()
+    
+    if not txt_files:
+        print("No .txt files found.")
+        return
+
+    print("Available .txt files:")
+    for i, file in enumerate(txt_files):
+        print(f"{i + 1}. {file}")
+    
+    file_index = int(input(f"Select a .txt file by number (1-{len(txt_files)}): ")) - 1
+    if 0 <= file_index < len(txt_files):
+        selected_file = txt_files[file_index]
+    else:
+        print("Invalid selection.")
+        return
+
+    track_ids = load_track_ids_from_txt(selected_file)
+
+    if not track_ids:
+        print(f"No track IDs found in {selected_file}.")
+        return
+
+    print("Select an option:")
+    print("1. Create a new playlist")
+    print("2. Add to an existing playlist")
+    option = input("Enter your choice (1 or 2): ").strip()
+
+    user_id = sp.current_user()['id']
+    rate_limit_check()
+
+    if option == '1':
+        # Create a new playlist
+        playlist_name = input("Enter the name for the new playlist: ").strip()
+        playlist = sp.user_playlist_create(user=user_id, name=playlist_name, public=False)
+        rate_limit_check()
+        playlist_id = playlist['id']
+
+        # Add tracks to the new playlist
+        for i in range(0, len(track_ids), 100):
+            sp.playlist_add_items(playlist_id, track_ids[i:i + 100])
+            rate_limit_check()
+
+        print(f"New playlist '{playlist_name}' created with {len(track_ids)} tracks.")
+    
+    elif option == '2':
+        # Add to an existing playlist
+        playlists = sp.current_user_playlists(limit=50)['items']
+        if not playlists:
+            print("No existing playlists found.")
+            return
+
+        print("Available playlists:")
+        for i, playlist in enumerate(playlists):
+            print(f"{i + 1}. {playlist['name']}")
+
+        playlist_index = int(input("Select a playlist by number: ").strip()) - 1
+        if 0 <= playlist_index < len(playlists):
+            playlist_id = playlists[playlist_index]['id']
+            existing_tracks = get_playlist_tracks(playlist_id)
+            new_tracks = [track for track in track_ids if track not in existing_tracks]
+
+            if not new_tracks:
+                print("No new tracks to add; all are already in the playlist.")
+                return
+
+            for i in range(0, len(new_tracks), 100):
+                sp.playlist_add_items(playlist_id, new_tracks[i:i + 100])
+                rate_limit_check()
+
+            print(f"{len(new_tracks)} new tracks added to the playlist.")
+        else:
+            print("Invalid playlist selection.")
+    else:
+        print("Invalid option. Please choose 1 or 2.")
+
+# Update the main function to include the third option
 def main():
     print("Select an option:")
     print("1. Export Spotify playlists")
     print("2. Import Spotify playlists")
+    print("3. Import track IDs from a text file")
 
-    choice = input("Enter your choice (1 or 2): ")
+    choice = input("Enter your choice (1, 2, or 3): ")
 
     if choice == '1':
         export_playlists()
     elif choice == '2':
         import_playlists()
+    elif choice == '3':
+        import_tracks_from_txt()
     else:
-        print("Invalid choice. Please enter 1 or 2.")
+        print("Invalid choice. Please enter 1, 2, or 3.")
 
 if __name__ == "__main__":
     main()
