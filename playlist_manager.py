@@ -91,7 +91,6 @@ def export_playlists():
 
     print(f"Playlists exported successfully to {csv_filename}.")
 
-
 def import_playlists():
     scope = "playlist-modify-public playlist-modify-private playlist-read-private"
     sp = init_spotify(scope)
@@ -126,10 +125,27 @@ def import_playlists():
         playlist = sp.user_playlist_create(user=user_id, name=playlist_name, public=False)
         rate_limit_check()
         playlist_id = playlist['id']
-        for i in range(0, len(tracks), 100):
-            sp.playlist_add_items(playlist_id, tracks[i:i+100])
+
+        # Deduplicate tracks based on artist name + track name
+        deduplicated_tracks = []
+        existing_tracks = get_playlist_tracks(playlist_id)
+
+        for track_id in tracks:
+            track_details = sp.track(track_id)
+            artist_name = track_details['artists'][0]['name']
+            track_name = track_details['name']
+            artist_track_key = f"{artist_name} - {track_name}"
+
+            if artist_track_key not in existing_tracks:
+                deduplicated_tracks.append(track_id)
+
+        for i in range(0, len(deduplicated_tracks), 100):
+            sp.playlist_add_items(playlist_id, deduplicated_tracks[i:i+100])
             rate_limit_check()
-        print(f"Playlist '{playlist_name}' created successfully with {len(tracks)} tracks.")
+
+        print(f"Playlist '{playlist_name}' created successfully with {len(deduplicated_tracks)} unique tracks.")
+
+
 
     csv_files = list_csv_files()
     
@@ -208,7 +224,6 @@ def parse_input(input_str, max_value):
 
     return sorted(indices)
 
-# New function to handle importing track IDs from a text file
 def import_tracks_from_txt():
     scope = "playlist-modify-public playlist-modify-private playlist-read-private"
     sp = init_spotify(scope)
@@ -219,9 +234,22 @@ def import_tracks_from_txt():
         return files
 
     def load_track_ids_from_txt(file_path):
-        """Read track IDs from a text file."""
+        """Read track URLs from a text file and extract track IDs."""
         with open(file_path, 'r', encoding='utf-8') as file:
-            return [line.strip() for line in file if line.strip()]
+            return [line.strip().split("/")[-1] for line in file if line.strip()]
+
+    def get_playlist_tracks(playlist_id):
+        """Get all track IDs in a playlist."""
+        offset = 0
+        track_ids = []
+        while True:
+            rate_limit_check()
+            tracks = sp.playlist_tracks(playlist_id, offset=offset)
+            track_ids.extend(track['track']['id'] for track in tracks['items'])
+            offset += len(tracks['items'])
+            if not tracks['next']:
+                break
+        return track_ids
 
     # List available text files
     txt_files = list_txt_files()
@@ -263,11 +291,16 @@ def import_tracks_from_txt():
         playlist_id = playlist['id']
 
         # Add tracks to the new playlist
-        for i in range(0, len(track_ids), 100):
-            sp.playlist_add_items(playlist_id, track_ids[i:i + 100])
-            rate_limit_check()
+        new_tracks = [track_id for track_id in track_ids if track_id not in get_playlist_tracks(playlist_id)]
+        
+        if not new_tracks:
+            print("All tracks are already in the playlist.")
+        else:
+            for i in range(0, len(new_tracks), 100):
+                sp.playlist_add_items(playlist_id, new_tracks[i:i + 100])
+                rate_limit_check()
 
-        print(f"New playlist '{playlist_name}' created with {len(track_ids)} tracks.")
+            print(f"New playlist '{playlist_name}' created with {len(new_tracks)} new tracks.")
     
     elif option == '2':
         # Add to an existing playlist
@@ -320,3 +353,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
