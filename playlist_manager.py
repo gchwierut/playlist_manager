@@ -4,53 +4,66 @@ from spotipy.oauth2 import SpotifyOAuth
 import csv
 import time
 from datetime import datetime
+import tkinter as tk
+from tkinter import filedialog
 
-# Spotify API credentials
-client_id = 'your_client_id'
-client_secret = 'your_client_secret'
-redirect_uri = 'http://localhost:8000/callback/'
+# ==========================================
+# CONFIGURATION
+# ==========================================
+
+# ⚠️ SECURITY WARNING: Replace these with your actual credentials.
+client_id = 'null'
+client_secret = 'null'
+redirect_uri = 'http://127.0.0.1:8000/callback/'
 
 # Rate-limiting constants
-MAX_CALLS_PER_MINUTE = 180
+MAX_CALLS_PER_MINUTE = 60
 call_count = 0
 start_time = datetime.now()
 
-# Initialize Spotify API client with both scopes
-def init_spotify(scope):
-    return spotipy.Spotify(auth_manager=SpotifyOAuth(client_id=client_id,
-                                                     client_secret=client_secret,
-                                                     redirect_uri=redirect_uri,
-                                                     scope=scope))
+# ==========================================
+# CORE FUNCTIONS
+# ==========================================
 
-# Rate-limit checking function
+def init_spotify(scope):
+    """Initialize Spotify API client with the requested scope."""
+    return spotipy.Spotify(auth_manager=SpotifyOAuth(
+        client_id=client_id,
+        client_secret=client_secret,
+        redirect_uri=redirect_uri,
+        scope=scope
+    ))
+
 def rate_limit_check():
+    """Prevents hitting Spotify's API rate limits."""
     global call_count, start_time
     call_count += 1
     elapsed_time = (datetime.now() - start_time).total_seconds()
+
     if call_count >= MAX_CALLS_PER_MINUTE:
         if elapsed_time < 60:
-            time_to_wait = 60 - elapsed_time
+            time_to_wait = 60 - elapsed_time + 1  # Add 1s buffer
             print(f"Rate limit reached. Waiting for {time_to_wait:.2f} seconds.")
             time.sleep(time_to_wait)
         call_count = 0
         start_time = datetime.now()
 
-# Export Spotify playlists to CSV
+# ==========================================
+# OPTION 1: EXPORT PLAYLISTS
+# ==========================================
+
 def export_playlists():
     scope = "playlist-read-private"
     sp = init_spotify(scope)
-    
-    # Generate the filename with the current username and date
+
     username = sp.current_user()['id']
     date_str = datetime.now().strftime("%Y%m%d")
     csv_filename = f'spotify_backup_{username}_{date_str}.csv'
-    
-    # Create CSV file and write headers
+
     with open(csv_filename, 'w', encoding='utf-8', newline='') as csv_file:
         csv_writer = csv.writer(csv_file)
         csv_writer.writerow(['artist_id', 'track_id', 'album_id', 'artist_name', 'track_name', 'album_name', 'track_popularity', 'release_date', 'playlist_id', 'playlist_name', 'playlist_index'])
 
-        # Initialize the first playlist request
         playlists = sp.current_user_playlists(limit=50)
         total_playlists = playlists['total']
         print(f"Total playlists to export: {total_playlists}")
@@ -65,282 +78,299 @@ def export_playlists():
                     tracks = sp.playlist_tracks(playlist['id'], offset=offset)
 
                     for track in tracks['items']:
-                        track_id = track['track']['id']
-                        artist_id = track['track']['artists'][0]['id']
-                        album_id = track['track']['album']['id']
-                        artist_name = track['track']['artists'][0]['name']
-                        track_name = track['track']['name']
-                        album_name = track['track']['album']['name']
-                        track_popularity = track['track']['popularity']
-                        release_date = track['track']['album']['release_date']
-                        playlist_id = playlist['id']
-                        playlist_name = playlist['name']
-                        csv_writer.writerow([artist_id, track_id, album_id, artist_name, track_name, album_name, track_popularity, release_date, playlist_id, playlist_name, playlist_index])
+                        if track.get('track') and track['track'].get('id'):
+                            t = track['track']
+                            track_id = t['id']
+                            artist_id = t['artists'][0]['id'] if t['artists'] else ''
+                            album_id = t['album']['id'] if t['album'] else ''
+                            artist_name = t['artists'][0]['name'] if t['artists'] else 'Unknown'
+                            track_name = t['name']
+                            album_name = t['album']['name'] if t['album'] else 'Unknown'
+                            track_popularity = t['popularity']
+                            release_date = t['album']['release_date'] if t['album'] else ''
+                            playlist_id = playlist['id']
+                            playlist_name = playlist['name']
+
+                            csv_writer.writerow([artist_id, track_id, album_id, artist_name, track_name, album_name, track_popularity, release_date, playlist_id, playlist_name, playlist_index])
 
                     offset += len(tracks['items'])
                     if not tracks['next']:
                         break
 
-                print(f"Playlist '{playlist['name']}' exported.")
-                # Progress update
-                print(f"Export progress: {playlist_index}/{total_playlists}")
+                print(f"Playlist '{playlist['name']}' exported ({playlist_index}/{total_playlists}).")
                 playlist_index += 1
 
-            # Fetch the next set of playlists
             playlists = sp.next(playlists) if playlists['next'] else None
 
     print(f"Playlists exported successfully to {csv_filename}.")
+
+# ==========================================
+# OPTION 2: IMPORT PLAYLISTS (FROM SINGLE BACKUP)
+# ==========================================
 
 def import_playlists():
     scope = "playlist-modify-public playlist-modify-private playlist-read-private"
     sp = init_spotify(scope)
 
     def list_csv_files():
-        files = [f for f in os.listdir('.') if f.startswith('spotify_backup') and f.endswith('.csv')]
-        return files
-
-    def select_csv_file(files):
-        print("Available CSV files:")
-        for i, file in enumerate(files):
-            print(f"{i + 1}. {file}")
-        
-        file_index = int(input(f"\nSelect a CSV file by number (1-{len(files)}): ")) - 1
-        
-        if 0 <= file_index < len(files):
-            return files[file_index]
-        else:
-            print("Invalid selection.")
-            return None
-
-    def get_playlist_tracks_from_csv(csv_filename, playlist_name):
-        tracks = []
-        with open(csv_filename, 'r', encoding='utf-8') as csv_file:
-            csv_reader = csv.DictReader(csv_file)
-            for row in csv_reader:
-                if row['playlist_name'] == playlist_name:
-                    tracks.append(row['track_id'])
-        return tracks
-
-    def create_new_playlist(user_id, playlist_name, tracks):
-        playlist = sp.user_playlist_create(user=user_id, name=playlist_name, public=False)
-        rate_limit_check()
-        playlist_id = playlist['id']
-
-        # Deduplicate tracks based on artist name + track name
-        deduplicated_tracks = []
-        existing_tracks = get_playlist_tracks(playlist_id)
-
-        for track_id in tracks:
-            track_details = sp.track(track_id)
-            artist_name = track_details['artists'][0]['name']
-            track_name = track_details['name']
-            artist_track_key = f"{artist_name} - {track_name}"
-
-            if artist_track_key not in existing_tracks:
-                deduplicated_tracks.append(track_id)
-
-        for i in range(0, len(deduplicated_tracks), 100):
-            sp.playlist_add_items(playlist_id, deduplicated_tracks[i:i+100])
-            rate_limit_check()
-
-        print(f"Playlist '{playlist_name}' created successfully with {len(deduplicated_tracks)} unique tracks.")
-
-
+        return [f for f in os.listdir('.') if f.startswith('spotify_backup') and f.endswith('.csv')]
 
     csv_files = list_csv_files()
-    
     if not csv_files:
         print("No CSV files found starting with 'spotify_backup'.")
         return
 
-    selected_file = select_csv_file(csv_files)
-    
-    if not selected_file:
+    print("Available CSV files:")
+    for i, file in enumerate(csv_files):
+        print(f"{i + 1}. {file}")
+
+    try:
+        file_index = int(input(f"\nSelect a CSV file by number (1-{len(csv_files)}): ")) - 1
+        selected_file = csv_files[file_index]
+    except (ValueError, IndexError):
+        print("Invalid selection.")
         return
 
-    playlists = []
-    with open(selected_file, 'r', encoding='utf-8') as csv_file:
-        csv_reader = csv.DictReader(csv_file)
-        for row in csv_reader:
-            if row['playlist_name'] not in playlists:
-                playlists.append(row['playlist_name'])
+    playlists_map = {}
+    with open(selected_file, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            p_name = row['playlist_name']
+            if p_name not in playlists_map:
+                playlists_map[p_name] = []
+            playlists_map[p_name].append(row['track_id'])
 
-    if not playlists:
-        print("No playlists found in the selected CSV file.")
-        return
+    playlist_names = list(playlists_map.keys())
+    print("\nAvailable playlists in backup:")
+    for i, p_name in enumerate(playlist_names):
+        print(f"{i + 1}. {p_name}")
 
-    print("Available playlists:")
-    for i, playlist in enumerate(playlists):
-        print(f"{i + 1}. {playlist}")
+    user_input = input(f"\nEnter numbers (e.g., 1,3,5-7 or 'all'): ")
 
-    user_input = input(f"\nEnter playlist numbers, ranges, or 'all' (e.g., 1,3,5-7 or all): ")
-
+    indices = set()
     if user_input.lower() == 'all':
-        indices = list(range(1, len(playlists) + 1))
+        indices = set(range(len(playlist_names)))
     else:
-        indices = parse_input(user_input, len(playlists))
-
-    if not indices:
-        print("No valid playlists selected.")
-        return
+        parts = user_input.split(',')
+        for part in parts:
+            if '-' in part:
+                try:
+                    s, e = map(int, part.split('-'))
+                    indices.update(range(s-1, e))
+                except ValueError: continue
+            else:
+                try:
+                    indices.add(int(part) - 1)
+                except ValueError: continue
 
     user_id = sp.current_user()['id']
-    rate_limit_check()
 
-    total_playlists = len(indices)
-    print(f"Total playlists to import: {total_playlists}")
+    for idx in indices:
+        if 0 <= idx < len(playlist_names):
+            p_name = playlist_names[idx]
+            track_ids = playlists_map[p_name]
+            print(f"\nCreating playlist: {p_name} ({len(track_ids)} tracks)")
 
-    for i in indices:
-        playlist_name = playlists[i - 1]
-        print(f"\nImporting playlist: {playlist_name}")
-        tracks = get_playlist_tracks_from_csv(selected_file, playlist_name)
+            rate_limit_check()
+            new_playlist = sp.user_playlist_create(user=user_id, name=p_name, public=False)
+            playlist_id = new_playlist['id']
 
-        if not tracks:
-            print(f"No tracks found for playlist: {playlist_name}")
-            continue
+            unique_tracks = list(dict.fromkeys(track_ids))
 
-        create_new_playlist(user_id, playlist_name, tracks)
+            for i in range(0, len(unique_tracks), 100):
+                chunk = unique_tracks[i:i+100]
+                rate_limit_check()
+                sp.playlist_add_items(playlist_id, chunk)
 
-        # Progress update
-        print(f"Import progress: {i}/{total_playlists}")
+            print(f"Finished {p_name}")
 
-def parse_input(input_str, max_value):
-    indices = set()
-    parts = input_str.split(',')
-
-    for part in parts:
-        if '-' in part:
-            start, end = map(int, part.split('-'))
-            if start <= end and start >= 1 and end <= max_value:
-                indices.update(range(start, end + 1))
-        else:
-            try:
-                index = int(part)
-                if 1 <= index <= max_value:
-                    indices.add(index)
-            except ValueError:
-                # Handle the case where part is not an integer
-                continue
-
-    return sorted(indices)
+# ==========================================
+# OPTION 3: IMPORT FROM TXT
+# ==========================================
 
 def import_tracks_from_txt():
     scope = "playlist-modify-public playlist-modify-private playlist-read-private"
     sp = init_spotify(scope)
 
-    def list_txt_files():
-        """List all .txt files in the current directory."""
-        files = [f for f in os.listdir('.') if f.endswith('.txt')]
-        return files
-
-    def load_track_ids_from_txt(file_path):
-        """Read track URLs from a text file and extract track IDs."""
-        with open(file_path, 'r', encoding='utf-8') as file:
-            return [line.strip().split("/")[-1] for line in file if line.strip()]
-
-    def get_playlist_tracks(playlist_id):
-        """Get all track IDs in a playlist."""
-        offset = 0
-        track_ids = []
-        while True:
-            rate_limit_check()
-            tracks = sp.playlist_tracks(playlist_id, offset=offset)
-            track_ids.extend(track['track']['id'] for track in tracks['items'])
-            offset += len(tracks['items'])
-            if not tracks['next']:
-                break
-        return track_ids
-
-    # List available text files
-    txt_files = list_txt_files()
-    
-    if not txt_files:
+    files = [f for f in os.listdir('.') if f.endswith('.txt')]
+    if not files:
         print("No .txt files found.")
         return
 
-    print("Available .txt files:")
-    for i, file in enumerate(txt_files):
-        print(f"{i + 1}. {file}")
-    
-    file_index = int(input(f"Select a .txt file by number (1-{len(txt_files)}): ")) - 1
-    if 0 <= file_index < len(txt_files):
-        selected_file = txt_files[file_index]
-    else:
-        print("Invalid selection.")
+    print("Available files:")
+    for i, f in enumerate(files):
+        print(f"{i+1}. {f}")
+
+    try:
+        sel = int(input("Select file: ")) - 1
+        filepath = files[sel]
+    except:
+        print("Invalid.")
         return
 
-    track_ids = load_track_ids_from_txt(selected_file)
+    with open(filepath, 'r', encoding='utf-8') as f:
+        track_ids = []
+        for line in f:
+            clean = line.strip()
+            if clean:
+                if 'http' in clean:
+                    clean = clean.split('/')[-1].split('?')[0]
+                track_ids.append(clean)
 
-    if not track_ids:
-        print(f"No track IDs found in {selected_file}.")
-        return
-
-    print("Select an option:")
-    print("1. Create a new playlist")
-    print("2. Add to an existing playlist")
-    option = input("Enter your choice (1 or 2): ").strip()
-
+    print(f"Found {len(track_ids)} tracks.")
+    choice = input("1. New Playlist\n2. Add to Existing\nChoice: ")
     user_id = sp.current_user()['id']
-    rate_limit_check()
 
-    if option == '1':
-        # Create a new playlist
-        playlist_name = input("Enter the name for the new playlist: ").strip()
-        playlist = sp.user_playlist_create(user=user_id, name=playlist_name, public=False)
+    target_playlist_id = None
+
+    if choice == '1':
+        name = input("Playlist Name: ")
         rate_limit_check()
-        playlist_id = playlist['id']
+        pl = sp.user_playlist_create(user=user_id, name=name, public=False)
+        target_playlist_id = pl['id']
+    elif choice == '2':
+        print("Please use Option 1 for now.")
+        return
 
-        # Add tracks to the new playlist
-        new_tracks = [track_id for track_id in track_ids if track_id not in get_playlist_tracks(playlist_id)]
-        
-        if not new_tracks:
-            print("All tracks are already in the playlist.")
+    if target_playlist_id:
+        for i in range(0, len(track_ids), 100):
+            rate_limit_check()
+            sp.playlist_add_items(target_playlist_id, track_ids[i:i+100])
+        print("Done.")
+
+# ==========================================
+# OPTION 4: SPOTIFY DUMP IMPORT (REVERSE CHRONOLOGICAL)
+# ==========================================
+
+def import_spotify_dump():
+    scope = "playlist-modify-public playlist-modify-private"
+    sp = init_spotify(scope)
+    user_id = sp.current_user()['id']
+
+    # 1. Open GUI Folder Selector
+    print("Opening folder selection dialog...")
+    root = tk.Tk()
+    root.withdraw()
+    folder_path = filedialog.askdirectory(title="Select Folder with CSV Files")
+    root.destroy()
+
+    if not folder_path:
+        print("No folder selected.")
+        return
+
+    print(f"Selected folder: {folder_path}")
+
+    # 2. List CSV files
+    csv_files = [f for f in os.listdir(folder_path) if f.endswith('.csv')]
+    if not csv_files:
+        print("No CSV files found in that folder.")
+        return
+
+    print(f"Found {len(csv_files)} CSV files. Analyzing dates to sort them...")
+
+    files_metadata = []
+
+    # 3. Analyze all files first
+    for file_name in csv_files:
+        full_path = os.path.join(folder_path, file_name)
+        track_ids = []
+        years = []
+
+        try:
+            with open(full_path, 'r', encoding='utf-8') as csv_file:
+                csv_reader = csv.DictReader(csv_file)
+
+                for row in csv_reader:
+                    # Extract Track ID
+                    tid = row.get('track_id', '').strip()
+                    if tid:
+                        track_ids.append(tid)
+
+                    # Extract Year
+                    date_str = row.get('album_release_date', '').strip()
+                    if date_str and len(date_str) >= 4:
+                        try:
+                            year_int = int(date_str[:4])
+                            years.append(year_int)
+                        except ValueError:
+                            pass
+        except Exception as e:
+            print(f"Error reading {file_name}: {e}")
+            continue
+
+        if not track_ids:
+            continue
+
+        # Determine Playlist Name
+        if not years:
+            min_year = 0
+            playlist_name = "Spotify Dump [Unknown Year]"
         else:
-            for i in range(0, len(new_tracks), 100):
-                sp.playlist_add_items(playlist_id, new_tracks[i:i + 100])
+            min_year = min(years)
+            max_year = max(years)
+
+            if min_year == max_year:
+                playlist_name = f"Spotify Dump [{min_year}]"
+            else:
+                playlist_name = f"Spotify Dump [{min_year}-{max_year}]"
+
+        files_metadata.append({
+            'filename': file_name,
+            'track_ids': track_ids,
+            'min_year': min_year,
+            'playlist_name': playlist_name
+        })
+
+    # 4. Sort files DESCENDING (Newest -> Oldest)
+    # This ensures the OLDEST year is created LAST, making it appear at the TOP of the Spotify UI.
+    files_metadata.sort(key=lambda x: x['min_year'], reverse=True)
+
+    print(f"\nAnalysis complete. Starting import of {len(files_metadata)} playlists (Newest -> Oldest).\n")
+
+    # 5. Create Playlists
+    for index, data in enumerate(files_metadata):
+        playlist_name = data['playlist_name']
+        track_ids = data['track_ids']
+        file_name = data['filename']
+
+        print(f"[{index+1}/{len(files_metadata)}] Creating '{playlist_name}' (from {file_name})...")
+
+        try:
+            rate_limit_check()
+            playlist = sp.user_playlist_create(user=user_id, name=playlist_name, public=False)
+            playlist_id = playlist['id']
+
+            # Deduplicate IDs
+            unique_ids = list(dict.fromkeys(track_ids))
+
+            # Batch add
+            for i in range(0, len(unique_ids), 100):
+                batch = unique_ids[i:i+100]
                 rate_limit_check()
+                sp.playlist_add_items(playlist_id, batch)
 
-            print(f"New playlist '{playlist_name}' created with {len(new_tracks)} new tracks.")
-    
-    elif option == '2':
-        # Add to an existing playlist
-        playlists = sp.current_user_playlists(limit=50)['items']
-        if not playlists:
-            print("No existing playlists found.")
-            return
+            print(f"   -> Success. Added {len(unique_ids)} tracks.")
 
-        print("Available playlists:")
-        for i, playlist in enumerate(playlists):
-            print(f"{i + 1}. {playlist['name']}")
+        except Exception as e:
+            print(f"   -> API Error: {e}")
 
-        playlist_index = int(input("Select a playlist by number: ").strip()) - 1
-        if 0 <= playlist_index < len(playlists):
-            playlist_id = playlists[playlist_index]['id']
-            existing_tracks = get_playlist_tracks(playlist_id)
-            new_tracks = [track for track in track_ids if track not in existing_tracks]
+    print("\nAll files processed.")
 
-            if not new_tracks:
-                print("No new tracks to add; all are already in the playlist.")
-                return
+# ==========================================
+# MAIN MENU
+# ==========================================
 
-            for i in range(0, len(new_tracks), 100):
-                sp.playlist_add_items(playlist_id, new_tracks[i:i + 100])
-                rate_limit_check()
-
-            print(f"{len(new_tracks)} new tracks added to the playlist.")
-        else:
-            print("Invalid playlist selection.")
-    else:
-        print("Invalid option. Please choose 1 or 2.")
-
-# Update the main function to include the third option
 def main():
-    print("Select an option:")
-    print("1. Export Spotify playlists")
-    print("2. Import Spotify playlists")
+    print("==================================")
+    print("   SPOTIFY MANAGER TOOL           ")
+    print("==================================")
+    print("1. Export Spotify playlists (Backup)")
+    print("2. Import Spotify playlists (Restore)")
     print("3. Import track IDs from a text file")
+    print("4. Spotify Dump Import (Folder - Auto-Sort)")
+    print("==================================")
 
-    choice = input("Enter your choice (1, 2, or 3): ")
+    choice = input("Enter your choice (1-4): ")
 
     if choice == '1':
         export_playlists()
@@ -348,9 +378,10 @@ def main():
         import_playlists()
     elif choice == '3':
         import_tracks_from_txt()
+    elif choice == '4':
+        import_spotify_dump()
     else:
-        print("Invalid choice. Please enter 1, 2, or 3.")
+        print("Invalid choice.")
 
 if __name__ == "__main__":
     main()
-
